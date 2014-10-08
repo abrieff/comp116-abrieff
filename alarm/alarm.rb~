@@ -1,0 +1,99 @@
+#!/usr/bin/env ruby
+
+
+require 'packetfu'
+require 'apachelogregex'
+include PacketFu
+
+def xmas_scan?(pkt, type)
+  return false if type != 'tcp'
+  flags = pkt.tcp_flags
+  flags_info = [(flags.fin), (flags.urg), (flags.psh)]
+  return flags_info.all? {|flag| flag == 1}
+end
+
+def null_scan?(pkt, type)
+   return false if type != 'tcp'
+   flags = pkt.tcp_flags
+   flags_info = [(flags.urg),(flags.fin), (flags.ack), (flags.psh), (flags.rst), (flags.syn)]
+   return flags_info.all? {|flag| flag == 1}
+end
+
+def credit_card?(pkt, type)
+  return false if type != 'tcp'
+  payload = pkt.payload
+  payload2 = payload.each_byte.map { |b| sprintf("0x%02X",b)}.join
+  matchdata = nil
+  credit_info = [/4\d{3}(\s|-)?\d{4}(\s|-)?\d{4}(\s|-)?\d{4}/, /5\d{3}(\s|-)?\d{4}(\s|-)?\d{4}(\s|-)?\d{4}/, /6011(\s|-)?\d{4}(\s|-)?\d{4}(\s|-)?\d{4}/, /3\d{3}(\s|-)?\d{6}(\s|-)?\d{5}/]
+  found = false
+  credit_info.each do |c|
+    matchdata = c.match(payload)
+  if matchdata != nil
+    return true
+  end
+  end
+  return false
+end
+
+def read_stream
+incident_num = 0;
+cap = PacketFu::Capture.new(:start => true, :iface => 'eth0', :promisc => true)
+cap.stream.each do |p|
+  pkt = Packet.parse p
+  if pkt.is_ip?
+    type = nil
+    type = "tcp" if pkt.is_tcp?
+    type = "udp" if pkt.is_udp?
+    
+    if pkt.is_ip? and type != nil
+      payload2 = pkt.payload.each_byte.map { |b| sprintf("0x%02X",b)}.join
+      if xmas_scan? pkt,type
+	incident_num += 1
+	
+	puts incident_num.to_s + ". ALERT: XMAS scan is detected from " + pkt.ip_saddr + " (" + type + ") (" + payload2 + ")\n"
+      end
+      if null_scan? pkt, type
+	incident_num += 1
+	puts incident_num.to_s + ". ALERT: NULL scan is detected from " + pkt.ip_saddr + " (" +  type + ") (" + payload2 + ")\n"
+      end
+      if credit_card? pkt, type
+	incident_num += 1
+	puts incident_num.to_s + " ALERT: Credit card leaked in the clear from (" + pkt.ip_saddr + ") HTTP (" + payload2 + ")\n"
+      end
+    end
+  end
+end
+end
+
+def read_log(file, readin)
+  incident_num = 0
+  format = '%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"'
+  parser = ApacheLogRegex.new(format)
+  File.foreach(file) do |line|
+    line_info = parser.parse(line)
+    if /Nmap/.match(line_info["%{User-Agent}i"])
+      incident_num += 1
+      puts incident_num.to_s + ". ALERT: NMAP error is detected from " + line_info["%h"] + " (HTTP) (" + line_info["%r"] + ")!\n"
+    end 
+    if /\b4(0|99)\b/.match(line_info["%>s"])
+      incident_num += 1
+      puts incident_num.to_s + ". ALERT: HTTP error is detected from " + line_info["%h"] + " (HTTP) (" + line_info["%r"] + ")!\n"
+    end
+    if /scripts\/setup.php/.match(line_info["%r"])
+      incident_num += 1
+      puts incident_num.to_s + ". ALERT: SHELL error is detected from " + line_info["%h"] + " (HTTP) (" + line_info["%r"] + ")!\n"
+    end
+  end
+    
+    
+  
+  
+end
+
+readin = ARGV[0]
+file = ARGV[1]
+if readin.nil? || file.nil?
+  read_stream
+else 
+  read_log file, readin
+end
