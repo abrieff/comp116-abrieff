@@ -1,0 +1,7 @@
+#!usr/bin/bash
+
+a='steghide: could not extract any data with that passphrase!\n'
+
+while read name; do
+b=`steghide extract -sf b.jpg -p $name -xf hidden`
+done < passwords.lst

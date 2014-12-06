@@ -1,0 +1,7 @@
+#!usr/bin/bash
+
+a='steghide: could not extract any data with that passphrase!\n'
+
+while read name; do
+b=`unzip -P $name 0024 -d 00245`
+done < passwords.lst
